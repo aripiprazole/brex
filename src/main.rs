@@ -13,10 +13,11 @@ pub struct DataDecl {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum DefunDecl<E> {
-    Fun(Ident, Vec<Ident>, E),           // (defun  $name)
-    Rec(Ident, Vec<Ident>, E),           // (rec defun $name)
-    Do(Ident, Vec<Ident>, Vec<Stmt<E>>), // (defun* $name)
+pub enum DefnDecl<E> {
+    Set(Ident, E),                       // (set $name)
+    Fun(Ident, Vec<Ident>, E),           // (defn $name)
+    Rec(Ident, Vec<Ident>, E),           // (rec defn $name)
+    Do(Ident, Vec<Ident>, Vec<Stmt<E>>), // (defn* $name)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -29,14 +30,14 @@ pub struct ClassDecl {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InstDecl<E> {
     pub predicates: Vec<Qual<Ident>>,
-    pub functions: im::HashMap<Ident, DefunDecl<E>, fxhash::FxBuildHasher>,
+    pub functions: im::HashMap<Ident, DefnDecl<E>, fxhash::FxBuildHasher>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Decl<E> {
     Data(DataDecl),
     Class(ClassDecl),
-    Defun(DefunDecl<E>),
+    Defun(DefnDecl<E>),
     Eval(E),
 }
 
@@ -73,7 +74,6 @@ pub enum Term {
     // expressions
     Var(Ident),
     As(Box<Term>, Ident),
-    Set(Ident, Box<Term>),
     Lam(Ident, Box<Term>),
     App(Box<Term>, Box<Term>),
     Let(Ident, Box<Term>, Box<Term>),
@@ -94,7 +94,6 @@ pub enum Elab {
 
     // expressions
     Var(Ident),                       // type(*ident)
-    Set(Ident, Box<Term>),            // type(*ident) := type(*elab)
     Lam(Ident, Box<Term>),            // type(*ident) -> type(*elab)
     App(Box<Term>, Box<Term>),        // type(*elab *elab)
     Let(Ident, Box<Term>, Box<Term>), // type(type(*ident) := type(*elab) in *elab)
