@@ -177,12 +177,52 @@ pub struct Scheme(Vec<Kind>, Qual<Ty>);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Hole(Box<Ty>);
 
+pub struct Lexer;
+
+pub struct Parser;
+
+pub type Result<V, E = String> = std::result::Result<V, E>;
+
 pub trait HasKind {
     fn kind(&self) -> Kind;
 }
 
 pub trait Instantiate {
     fn instantiate(&self, types: Vec<Ty>) -> Self;
+}
+
+impl Lexer {
+    pub fn new(_code: String) -> Self {
+        todo!()
+    }
+
+    pub fn lex(&self) -> Parser {
+        todo!()
+    }
+}
+
+impl From<Lexer> for Parser {
+    fn from(_lexer: Lexer) -> Self {
+        todo!()
+    }
+}
+
+impl Parser {
+    pub fn parse(&self) -> Result<Exp> {
+        todo!()
+    }
+}
+
+impl Exp {
+    pub fn spec(&self) -> Result<Term> {
+        todo!()
+    }
+}
+
+impl Term {
+    pub fn elab(&self) -> Result<Elab> {
+        todo!()
+    }
 }
 
 impl HasKind for Cons {
@@ -253,4 +293,15 @@ impl Deref for Hole {
     }
 }
 
-fn main() {}
+fn main() {
+    let elab = Lexer::new("(println \"hello, world\")".to_string())
+        .lex()
+        .parse()
+        .unwrap()
+        .spec()
+        .unwrap()
+        .elab()
+        .unwrap();
+
+    println!("{:#?}", elab)
+}
