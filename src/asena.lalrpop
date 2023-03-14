@@ -1,0 +1,24 @@
+use std::str::FromStr;
+use lalrpop_util::ParseError;
+use substring::Substring;
+use crate::Exp;
+use crate::Ident;
+use crate::Prim;
+use crate::leak_string;
+use crate::parse_number;
+
+grammar;
+
+pub Term: Exp = {
+    Atom => Exp::Atom(Ident(<>)),
+    Number => Exp::Prim(<>),
+    Str => Exp::Prim(<>),
+    "(" <t:Term*> ")" => t.into_iter().rfold(Exp::Nil, |acc, x| Exp::Cons(Box::new(x), Box::new(acc))),
+};
+
+Number: Prim = r"[0-9]+(.[0-9]+)?" =>? parse_number(<>)
+  .map_err(|error| ParseError::User {
+    error: leak_string(error),
+  });
+Atom: String = <s:r"[^()\r\n\t0-9' ][^()\r\n\t' ]*"> => s.to_string();
+Str: Prim = r#"'(?:[^"\\]++|\\.)*+'"# => Prim::String(<>.substring(1, <>.len() - 1).to_string());

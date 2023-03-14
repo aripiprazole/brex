@@ -46,9 +46,9 @@ pub enum Prim {
     Unit,
     True,
     False,
-    Char(char),
     Decimal(i128, i128),
     Int(i128),
+    String(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -68,8 +68,8 @@ pub enum Exp {
 
     // constructs
     Atom(Ident),
-    App(Box<Exp>, Box<Exp>),
-    String(String),
+    Cons(Box<Exp>, Box<Exp>),
+    Nil,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -83,6 +83,7 @@ pub enum Term {
     Prim(Prim),
 
     // expressions
+    Nil,
     Var(Ident),
     Do(Vec<Stmt<Term>>),
     As(Box<Term>, Ident),
@@ -100,6 +101,7 @@ pub enum Elab {
     Prim(Prim),
 
     // expressions
+    Nil,
     Var(Ident, Ty),                     // type(*ident)
     Do(Vec<Stmt<Elab>>),                // type(*stmt)
     Lam(Ident, Box<Elab>),              // type(*ident) -> type(*elab)
@@ -185,9 +187,8 @@ pub struct Scheme(Vec<Kind>, Qual<Ty>);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Hole(Box<Ty>);
 
-pub struct Lexer;
-
-pub struct Parser;
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Span<A>(A, pub std::ops::Range<usize>);
 
 pub type Result<V, E = String> = std::result::Result<V, E>;
 
@@ -197,28 +198,6 @@ pub trait HasKind {
 
 pub trait Instantiate {
     fn instantiate(&self, types: Vec<Ty>) -> Self;
-}
-
-impl Lexer {
-    pub fn new(_code: String) -> Self {
-        todo!()
-    }
-
-    pub fn lex(&self) -> Parser {
-        todo!()
-    }
-}
-
-impl From<Lexer> for Parser {
-    fn from(_lexer: Lexer) -> Self {
-        todo!()
-    }
-}
-
-impl Parser {
-    pub fn parse(&self) -> Result<Exp> {
-        todo!()
-    }
 }
 
 impl Exp {
@@ -301,15 +280,96 @@ impl Deref for Hole {
     }
 }
 
-fn main() {
-    let elab = Lexer::new("(println \"hello, world\")".to_string())
-        .lex()
-        .parse()
-        .unwrap()
-        .spec()
-        .unwrap()
-        .elab()
-        .unwrap();
+#[macro_use]
+extern crate lalrpop_util;
 
-    println!("{:#?}", elab)
+lalrpop_mod!(
+    #[allow(clippy::all)]
+    #[allow(unused)]
+    pub asena
+);
+
+pub fn leak_string(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
+pub fn parse_number(str: &str) -> Result<Prim, String> {
+    let mut parts = str.split('.');
+    let int = parts.next().ok_or("no integer part")?;
+    let int = int
+        .parse::<i128>()
+        .map_err(|_| "integer part is not a number")?;
+
+    match parts.next() {
+        Some(frac) => {
+            let frac = frac
+                .parse::<i128>()
+                .map_err(|_| "frac part is not a number")?;
+
+            Ok(Prim::Decimal(int, frac))
+        }
+        None => Ok(Prim::Int(int)),
+    }
+}
+
+fn main() {
+    asena::TermParser::new().parse("1.0").unwrap();
+}
+
+#[cfg(test)]
+mod parser_tests {
+    use super::*;
+
+    #[test]
+    fn string_parses() {
+        let string = crate::asena::TermParser::new().parse("'hello'").unwrap();
+
+        assert_eq!(string, Exp::Prim(Prim::String("hello".to_string())));
+    }
+
+    #[test]
+    fn int_parses() {
+        let int = crate::asena::TermParser::new().parse("1").unwrap();
+
+        assert_eq!(int, Exp::Prim(Prim::Int(1)));
+    }
+
+    #[test]
+    fn decimal_parses() {
+        let decimal = crate::asena::TermParser::new().parse("1.0").unwrap();
+
+        assert_eq!(decimal, Exp::Prim(Prim::Decimal(1, 0)));
+    }
+
+    #[test]
+    fn atom_parses() {
+        let atom = crate::asena::TermParser::new().parse("some").unwrap();
+
+        assert_eq!(atom, Exp::Atom(Ident("some".to_string())));
+    }
+
+    #[test]
+    fn cons_parses() {
+        let cons = crate::asena::TermParser::new()
+            .parse("(some thing)")
+            .unwrap();
+
+        assert_eq!(
+            cons,
+            Exp::Cons(
+                Box::new(Exp::Atom(Ident("some".to_string()))),
+                Box::new(Exp::Cons(
+                    Box::new(Exp::Atom(Ident("thing".to_string()))),
+                    Box::new(Exp::Nil),
+                ))
+            )
+        );
+    }
+
+    #[test]
+    fn nil_parses() {
+        let nil = crate::asena::TermParser::new().parse("()").unwrap();
+
+        assert_eq!(nil, Exp::Nil);
+    }
 }
