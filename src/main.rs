@@ -204,32 +204,73 @@ pub trait Instantiate {
     fn instantiate(&self, types: Vec<Ty>) -> Self;
 }
 
-pub trait Spec {
-    fn spec(self) -> Result<Term>;
+pub trait Spec<T> {
+    fn spec(self) -> Result<T>;
 }
 
-impl Spec for Exp {
-    fn spec(self) -> Result<Term> {
+impl TryFrom<Exp> for Decl<Term> {
+    type Error = String;
+
+    fn try_from(value: Exp) -> Result<Self, Self::Error> {
+        use crate::Exp::*;
+
+        if let Cons(box Atom(Ident(name)), box tail) = value.clone() {
+            let args: Vec<_> = tail.try_into()?;
+
+            return match (name, args.as_slice()) {
+                ("class", &[..]) => todo!(),
+                ("impl", &[..]) => todo!(),
+                _ => Ok(Decl::Eval(value.try_into()?)),
+            };
+        }
+
+        Ok(Decl::Eval(value.try_into()?))
+    }
+}
+
+impl TryFrom<Vec<Term>> for Stmt<Term> {
+    type Error = String;
+
+    fn try_from(value: Vec<Term>) -> Result<Self, Self::Error> {
+        use crate::Term::*;
+
+        match value.as_slice() {
+            [Atom(Ident("<-")), Atom(name), value] => {
+                Ok(Stmt::Binding(name.clone(), value.clone()))
+            }
+            [value] => Ok(Stmt::Eval(value.clone())),
+            _ => Err(format!("invalid statement: {:?}", value)),
+        }
+    }
+}
+
+impl TryFrom<Exp> for Term {
+    type Error = String;
+
+    fn try_from(value: Exp) -> Result<Self, Self::Error> {
         use crate::Exp::*;
         use crate::Prim::*;
 
-        match self {
+        match value {
             Nil => Ok(Term::Nil),
             Prim(prim) => Ok(Term::Prim(prim)),
             Atom(Ident("True")) => Ok(Term::Prim(True)),
             Atom(Ident("False")) => Ok(Term::Prim(False)),
             Atom(ident) => Ok(Term::Atom(ident)),
             Cons(box Nil, ..) => Err("invalid callee: nil. can't call nil".to_string()),
-            Cons(box Atom(Ident(name)), box tail) => cons_spec(name, tail.try_into()?),
             Cons(head @ box Prim(..), ..) => Err(format!(
                 "invalid callee: {head:?}. can't call primitive value"
             )),
-            Cons(head, tail) => Ok(Term::App(head.spec()?.into(), tail.spec()?.into())),
+            Cons(box Atom(Ident(name)), box tail) => call_spec(name, tail.try_into()?),
+            Cons(box head, box tail) => Ok(Term::App(
+                Box::new(head.try_into()?),
+                Box::new(tail.try_into()?),
+            )),
         }
     }
 }
 
-fn cons_spec(name: &str, args: Vec<Term>) -> Result<Term> {
+fn call_spec(name: &str, args: Vec<Term>) -> Result<Term> {
     use Term::*;
 
     match (name, args.as_slice()) {
@@ -238,20 +279,16 @@ fn cons_spec(name: &str, args: Vec<Term>) -> Result<Term> {
         ("let", [App(box Atom(name), value), term]) => {
             Ok(Let(name.clone(), value.clone(), term.clone().into()))
         }
-        ("do", stmts @ &[..]) => {
+        ("do", stmts @ [..]) => {
             let smts = stmts
                 .iter()
-                .map(|term| Vec::<Term>::try_from(term.clone()))
-                .collect::<Result<Vec<Vec<Term>>>>()?
-                .iter()
-                .map(|args| match args.as_slice() {
-                    [Atom(Ident("<-")), Atom(name), value] => {
-                        Ok(Stmt::Binding(name.clone(), value.clone()))
-                    }
-                    [value] => Ok(Stmt::Eval(value.clone())),
-                    _ => Err(format!("invalid statement: {:?}", args)),
+                .map(|stmt| {
+                    let stmt: Vec<_> = stmt.clone().try_into()?;
+                    let stmt: Stmt<_> = stmt.try_into()?;
+
+                    Ok(stmt)
                 })
-                .collect::<Result<Vec<Stmt<Term>>>>()?;
+                .collect::<Result<_>>()?;
 
             Ok(Term::Do(smts))
         }
@@ -275,6 +312,13 @@ impl TryFrom<Term> for Vec<Term> {
         Ok(list)
     }
 }
+impl TryFrom<Box<Exp>> for Vec<Term> {
+    type Error = String;
+
+    fn try_from(value: Box<Exp>) -> Result<Vec<Term>, Self::Error> {
+        TryFrom::<Exp>::try_from(*value)
+    }
+}
 
 impl TryFrom<Exp> for Vec<Term> {
     type Error = String;
@@ -283,8 +327,8 @@ impl TryFrom<Exp> for Vec<Term> {
         let mut list = vec![];
         let mut current = value;
 
-        while let Exp::Cons(head, tail) = current {
-            list.push(head.spec()?);
+        while let Exp::Cons(box head, tail) = current {
+            list.push(head.try_into()?);
             current = *tail;
         }
 
