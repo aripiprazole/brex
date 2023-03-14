@@ -20,5 +20,5 @@ Number: Prim = r"[0-9]+(.[0-9]+)?" =>? parse_number(<>)
   .map_err(|error| ParseError::User {
     error: leak_string(error),
   });
-Atom: String = <s:r"[^()\r\n\t0-9' ][^()\r\n\t' ]*"> => s.to_string();
+Atom: &'static str = r"[^()\r\n\t0-9' ][^()\r\n\t' ]*" => leak_string(<>.to_string());
 Str: Prim = r#"'(?:[^"\\]++|\\.)*+'"# => Prim::String(<>.substring(1, <>.len() - 1).to_string());

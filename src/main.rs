@@ -1,9 +1,14 @@
-#![feature(associated_type_defaults, try_trait_v2, box_patterns)]
+#![feature(
+    associated_type_defaults,
+    try_trait_v2,
+    box_patterns,
+    string_deref_patterns
+)]
 
 use std::ops::Deref;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Ident(String);
+pub struct Ident(&'static str);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DataDecl {
@@ -199,59 +204,59 @@ pub trait Instantiate {
     fn instantiate(&self, types: Vec<Ty>) -> Self;
 }
 
-impl Exp {
-    pub fn spec(self) -> Result<Term> {
+pub trait Spec {
+    fn spec(self) -> Result<Term>;
+}
+
+impl Spec for Exp {
+    fn spec(self) -> Result<Term> {
         use crate::Exp::*;
         use crate::Prim::*;
 
         match self {
             Nil => Ok(Term::Nil),
             Prim(prim) => Ok(Term::Prim(prim)),
-            Atom(Ident(ident)) if ident == "True" => Ok(Term::Prim(True)),
-            Atom(Ident(ident)) if ident == "False" => Ok(Term::Prim(False)),
+            Atom(Ident("True")) => Ok(Term::Prim(True)),
+            Atom(Ident("False")) => Ok(Term::Prim(False)),
             Atom(ident) => Ok(Term::Atom(ident)),
-            Cons(box Nil, ..) => Ok(Term::Nil), // error
-            Cons(box Prim(False | True | Int(..) | Decimal(..)), ..) => {
-                todo!() // error
-            }
-            Cons(box Atom(Ident(name)), box tail) => Exp::specialize_cons(&name, tail.try_into()?),
+            Cons(box Nil, ..) => Err("invalid callee: nil. can't call nil".to_string()),
+            Cons(box Atom(Ident(name)), box tail) => cons_spec(name, tail.try_into()?),
+            Cons(head @ box Prim(..), ..) => Err(format!(
+                "invalid callee: {head:?}. can't call primitive value"
+            )),
             Cons(head, tail) => Ok(Term::App(head.spec()?.into(), tail.spec()?.into())),
         }
     }
+}
 
-    fn specialize_cons(name: &str, args: Vec<Term>) -> Result<Term> {
-        match (name, args.as_slice()) {
-            ("as", [value, Term::Atom(type_name)]) => {
-                Ok(Term::As(Box::new(value.clone()), type_name.clone()))
-            }
-            ("lambda", [Term::Atom(name), term]) => {
-                Ok(Term::Lam(name.clone(), Box::new(term.clone())))
-            }
-            ("let", [Term::App(box Term::Atom(name), value), term]) => Ok(Term::Let(
-                name.clone(),
-                value.clone(),
-                Box::new(term.clone()),
-            )),
-            ("do", stmts @ &[..]) => {
-                let smts = stmts
-                    .iter()
-                    .map(|term| Vec::<Term>::try_from(term.clone()))
-                    .collect::<Result<Vec<Vec<Term>>>>()?
-                    .iter()
-                    .map(|args| match args.as_slice() {
-                        [Term::Atom(Ident(arrow)), Term::Atom(name), value] if arrow == "<-" => {
-                            Ok(Stmt::Binding(name.clone(), value.clone()))
-                        }
-                        [value] => Ok(Stmt::Eval(value.clone())),
-                        _ => Err(format!("invalid statement: {:?}", args)),
-                    })
-                    .collect::<Result<Vec<Stmt<Term>>>>()?;
+fn cons_spec(name: &str, args: Vec<Term>) -> Result<Term> {
+    use Term::*;
 
-                Ok(Term::Do(smts))
-            }
-
-            _ => todo!(),
+    match (name, args.as_slice()) {
+        ("as", [value, Atom(type_name)]) => Ok(As(value.clone().into(), type_name.clone())),
+        ("lambda", [Atom(name), term]) => Ok(Lam(name.clone(), term.clone().into())),
+        ("let", [App(box Atom(name), value), term]) => {
+            Ok(Let(name.clone(), value.clone(), term.clone().into()))
         }
+        ("do", stmts @ &[..]) => {
+            let smts = stmts
+                .iter()
+                .map(|term| Vec::<Term>::try_from(term.clone()))
+                .collect::<Result<Vec<Vec<Term>>>>()?
+                .iter()
+                .map(|args| match args.as_slice() {
+                    [Atom(Ident("<-")), Atom(name), value] => {
+                        Ok(Stmt::Binding(name.clone(), value.clone()))
+                    }
+                    [value] => Ok(Stmt::Eval(value.clone())),
+                    _ => Err(format!("invalid statement: {:?}", args)),
+                })
+                .collect::<Result<Vec<Stmt<Term>>>>()?;
+
+            Ok(Term::Do(smts))
+        }
+
+        _ => todo!(),
     }
 }
 
@@ -426,7 +431,7 @@ mod parser_tests {
     fn atom_parses() {
         let atom = crate::asena::TermParser::new().parse("some").unwrap();
 
-        assert_eq!(atom, Exp::Atom(Ident("some".to_string())));
+        assert_eq!(atom, Exp::Atom(Ident("some")));
     }
 
     #[test]
@@ -438,11 +443,8 @@ mod parser_tests {
         assert_eq!(
             cons,
             Exp::Cons(
-                Box::new(Exp::Atom(Ident("some".to_string()))),
-                Box::new(Exp::Cons(
-                    Box::new(Exp::Atom(Ident("thing".to_string()))),
-                    Box::new(Exp::Nil),
-                ))
+                Exp::Atom(Ident("some")).into(),
+                Exp::Cons(Exp::Atom(Ident("thing")).into(), Exp::Nil.into()).into()
             )
         );
     }
