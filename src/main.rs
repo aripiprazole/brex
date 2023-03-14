@@ -43,7 +43,6 @@ pub enum Decl<E> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Prim {
-    Unit,
     True,
     False,
     Decimal(i128, i128),
@@ -56,8 +55,8 @@ pub enum Pat {
     Prim(Prim),
 
     /// constructs
-    At(Ident, Box<Pat>), // (@ $name $pat)
-    Var(Ident),            // $name
+    Atom(Ident), // $name
+    At(Ident, Box<Pat>),   // (@ $name $pat)
     Cons(Ident, Vec<Pat>), // ($name $pat*)
     Wild,                  // _
 }
@@ -73,9 +72,9 @@ pub enum Exp {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Stmt<E> {
-    pub name: Option<Ident>,
-    pub value: Box<E>,
+pub enum Stmt<E> {
+    Binding(Ident, E),
+    Eval(E),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -84,7 +83,7 @@ pub enum Term {
 
     // expressions
     Nil,
-    Var(Ident),
+    Atom(Ident),
     Do(Vec<Stmt<Term>>),
     As(Box<Term>, Ident),
     Lam(Ident, Box<Term>),
@@ -102,7 +101,7 @@ pub enum Elab {
 
     // expressions
     Nil,
-    Var(Ident, Ty),                     // type(*ident)
+    Atom(Ident, Ty),                    // type(*ident)
     Do(Vec<Stmt<Elab>>),                // type(*stmt)
     Lam(Ident, Box<Elab>),              // type(*ident) -> type(*elab)
     App(Box<Elab>, Box<Elab>),          // type(*elab *elab)
@@ -201,8 +200,90 @@ pub trait Instantiate {
 }
 
 impl Exp {
-    pub fn spec(&self) -> Result<Term> {
-        todo!()
+    pub fn spec(self) -> Result<Term> {
+        use crate::Exp::*;
+        use crate::Prim::*;
+
+        match self {
+            Nil => Ok(Term::Nil),
+            Prim(prim) => Ok(Term::Prim(prim)),
+            Atom(Ident(ident)) if ident == "True" => Ok(Term::Prim(True)),
+            Atom(Ident(ident)) if ident == "False" => Ok(Term::Prim(False)),
+            Atom(ident) => Ok(Term::Atom(ident)),
+            Cons(box Nil, ..) => Ok(Term::Nil), // error
+            Cons(box Prim(False | True | Int(..) | Decimal(..)), ..) => {
+                todo!() // error
+            }
+            Cons(box Atom(Ident(name)), box tail) => Exp::specialize_cons(&name, tail.try_into()?),
+            Cons(head, tail) => Ok(Term::App(head.spec()?.into(), tail.spec()?.into())),
+        }
+    }
+
+    fn specialize_cons(name: &str, args: Vec<Term>) -> Result<Term> {
+        match (name, args.as_slice()) {
+            ("as", [value, Term::Atom(type_name)]) => {
+                Ok(Term::As(Box::new(value.clone()), type_name.clone()))
+            }
+            ("lambda", [Term::Atom(name), term]) => {
+                Ok(Term::Lam(name.clone(), Box::new(term.clone())))
+            }
+            ("let", [Term::App(box Term::Atom(name), value), term]) => Ok(Term::Let(
+                name.clone(),
+                value.clone(),
+                Box::new(term.clone()),
+            )),
+            ("do", stmts @ &[..]) => {
+                let smts = stmts
+                    .iter()
+                    .map(|term| Vec::<Term>::try_from(term.clone()))
+                    .collect::<Result<Vec<Vec<Term>>>>()?
+                    .iter()
+                    .map(|args| match args.as_slice() {
+                        [Term::Atom(Ident(arrow)), Term::Atom(name), value] if arrow == "<-" => {
+                            Ok(Stmt::Binding(name.clone(), value.clone()))
+                        }
+                        [value] => Ok(Stmt::Eval(value.clone())),
+                        _ => Err(format!("invalid statement: {:?}", args)),
+                    })
+                    .collect::<Result<Vec<Stmt<Term>>>>()?;
+
+                Ok(Term::Do(smts))
+            }
+
+            _ => todo!(),
+        }
+    }
+}
+
+impl TryFrom<Term> for Vec<Term> {
+    type Error = String;
+
+    fn try_from(value: Term) -> Result<Vec<Term>, Self::Error> {
+        let mut list = vec![];
+        let mut current = value;
+
+        while let Term::App(box head, tail) = current {
+            list.push(head);
+            current = *tail;
+        }
+
+        Ok(list)
+    }
+}
+
+impl TryFrom<Exp> for Vec<Term> {
+    type Error = String;
+
+    fn try_from(value: Exp) -> Result<Vec<Term>, Self::Error> {
+        let mut list = vec![];
+        let mut current = value;
+
+        while let Exp::Cons(head, tail) = current {
+            list.push(head.spec()?);
+            current = *tail;
+        }
+
+        Ok(list)
     }
 }
 
