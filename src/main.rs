@@ -42,13 +42,29 @@ pub enum Decl<E> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Exp {
-    // primitives
+pub enum Prim {
+    Unit,
     True,
     False,
     Char(char),
     Decimal(i128, i128),
     Int(i128),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Pat {
+    Prim(Prim),
+
+    /// constructs
+    At(Ident, Box<Pat>), // (@ $name $pat)
+    Var(Ident),            // $name
+    Cons(Ident, Vec<Pat>), // ($name $pat*)
+    Wild,                  // _
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Exp {
+    Prim(Prim),
 
     // constructs
     Atom(Ident),
@@ -64,20 +80,16 @@ pub struct Stmt<E> {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Term {
-    // primitives
-    True,
-    False,
-    Char(char),
-    Decimal(i128, i128),
-    Int(i128),
+    Prim(Prim),
 
     // expressions
     Var(Ident),
+    Do(Vec<Stmt<Term>>),
     As(Box<Term>, Ident),
     Lam(Ident, Box<Term>),
     App(Box<Term>, Box<Term>),
     Let(Ident, Box<Term>, Box<Term>),
-    Do(Vec<Stmt<Term>>),
+    Match(Box<Term>, Vec<(Pat, Term)>),
 
     // *internal*
     Closure(Vec<(String, Term)>, Ident, Box<Term>),
@@ -85,19 +97,15 @@ pub enum Term {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Elab {
-    // primitives
-    True,                // Bool
-    False,               // Bool
-    Char(char),          // Char
-    Decimal(i128, i128), // Decimal
-    Int(i128),           // Int
+    Prim(Prim),
 
     // expressions
-    Var(Ident, Ty),                   // type(*ident)
-    Lam(Ident, Box<Elab>),            // type(*ident) -> type(*elab)
-    App(Box<Elab>, Box<Elab>),        // type(*elab *elab)
-    Let(Ident, Box<Elab>, Box<Elab>), // type(type(*ident) := type(*elab) in *elab)
-    Do(Vec<Stmt<Elab>>),              // type(*stmt)
+    Var(Ident, Ty),                     // type(*ident)
+    Do(Vec<Stmt<Elab>>),                // type(*stmt)
+    Lam(Ident, Box<Elab>),              // type(*ident) -> type(*elab)
+    App(Box<Elab>, Box<Elab>),          // type(*elab *elab)
+    Let(Ident, Box<Elab>, Box<Elab>),   // type(type(*ident) := type(*elab) in *elab)
+    Match(Box<Elab>, Vec<(Pat, Elab)>), // type(match *elab with $pat => *elab
 
     // *internal*
     Closure(Vec<(String, Elab)>, Ident, Box<Elab>),
