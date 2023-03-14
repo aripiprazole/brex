@@ -93,14 +93,14 @@ pub enum Elab {
     Int(i128),           // Int
 
     // expressions
-    Var(Ident),                       // type(*ident)
-    Lam(Ident, Box<Term>),            // type(*ident) -> type(*elab)
-    App(Box<Term>, Box<Term>),        // type(*elab *elab)
-    Let(Ident, Box<Term>, Box<Term>), // type(type(*ident) := type(*elab) in *elab)
+    Var(Ident, Ty),                   // type(*ident)
+    Lam(Ident, Box<Elab>),            // type(*ident) -> type(*elab)
+    App(Box<Elab>, Box<Elab>),        // type(*elab *elab)
+    Let(Ident, Box<Elab>, Box<Elab>), // type(type(*ident) := type(*elab) in *elab)
     Do(Vec<Stmt<Elab>>),              // type(*stmt)
 
     // *internal*
-    Closure(Vec<(String, Term)>, Ident, Box<Term>),
+    Closure(Vec<(String, Elab)>, Ident, Box<Elab>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
