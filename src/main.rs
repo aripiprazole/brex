@@ -1,11 +1,4 @@
-#![feature(
-    associated_type_defaults,
-    try_trait_v2,
-    box_patterns,
-    string_deref_patterns
-)]
-
-use std::ops::Deref;
+#![feature(associated_type_defaults, box_patterns)]
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Ident(&'static str);
@@ -156,11 +149,11 @@ pub enum Kind {
 pub enum Cons {
     Bool,    // Bool
     Int,     // Int
-    Decimal, // Int
+    Decimal, // Decimal
     Nat,     // Nat
     Char,    // Char
     String,  // String (alias -> [Char])
-    Unit,    // ()
+    Nil,     // ()
     Atom(Ident),
 }
 
@@ -171,7 +164,7 @@ pub struct Var(Ident, Kind);
 pub enum App {
     Call(Hole, Hole),  // τ τ
     Arrow(Hole, Hole), // τ -> τ
-    Array(Hole, Hole), // [τ]
+    Array(Hole),       // [τ]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -193,6 +186,15 @@ pub struct Hole(Box<Ty>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Span<A>(A, pub std::ops::Range<usize>);
+
+pub enum Mode {
+    Interperse,
+    Before,
+}
+
+pub struct Spaced<'a, T>(pub Mode, pub &'static str, pub &'a [T])
+where
+    T: std::fmt::Display;
 
 pub type Result<V, E = String> = std::result::Result<V, E>;
 
@@ -312,6 +314,7 @@ impl TryFrom<Term> for Vec<Term> {
         Ok(list)
     }
 }
+
 impl TryFrom<Box<Exp>> for Vec<Term> {
     type Error = String;
 
@@ -359,7 +362,7 @@ impl HasKind for App {
         match self {
             App::Arrow(head, tail) => Kind::Fun(Box::new(head.kind()), Box::new(tail.kind())),
             App::Call(head, ty) => head.kind().apply(ty.unwrap()),
-            App::Array(_, _) => Kind::Any,
+            App::Array(_) => Kind::Any,
         }
     }
 }
@@ -402,7 +405,94 @@ impl Hole {
     }
 }
 
-impl Deref for Hole {
+impl<'a, T> std::fmt::Display for Spaced<'a, T>
+where
+    T: std::fmt::Display,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Spaced(Mode::Interperse, string, slice) => {
+                if !slice.is_empty() {
+                    write!(f, "{}", slice[0])?;
+                    for element in &slice[1..] {
+                        write!(f, "{string}{element}")?;
+                    }
+                }
+            }
+            Spaced(Mode::Before, string, slice) => {
+                for element in slice.iter() {
+                    write!(f, "{string}{element}")?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for Ident {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::fmt::Display for Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Kind::Any => write!(f, "*"),
+            Kind::Fun(head, tail) => write!(f, "{head} -> {tail}"),
+        }
+    }
+}
+
+impl std::fmt::Display for Ty {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use App::*;
+        use Cons::*;
+
+        match self {
+            Ty::Gen(i) => write!(f, "'{}", get_new_sym(*i).unwrap_or_default()),
+            Ty::Var(Var(name, kind)) => write!(f, "(: '{name} {kind})"),
+            Ty::App(Call(a, b)) => match (a.clone().into(), b.clone().into()) {
+                (a @ Ty::App(..), b @ Ty::App(..)) => write!(f, "(({a}) ({b}))"),
+                (a @ Ty::App(..), b) => write!(f, "(({a}) {b})"),
+                (a, b @ Ty::App(..)) => write!(f, "({a} ({b}))"),
+                (a, b) => write!(f, "({a} {b})"),
+            },
+            Ty::App(Arrow(a, b)) => write!(f, "(-> {a} {b})"),
+            Ty::App(Array(repr)) => write!(f, "[{repr}]"),
+            Ty::Cons(Bool) => write!(f, "Bool"),
+            Ty::Cons(Int) => write!(f, "Int"),
+            Ty::Cons(Decimal) => write!(f, "Decimal"),
+            Ty::Cons(Nat) => write!(f, "Nat"),
+            Ty::Cons(Char) => write!(f, "Char"),
+            Ty::Cons(String) => write!(f, "String"),
+            Ty::Cons(Nil) => write!(f, "()"),
+            Ty::Cons(Atom(name)) => write!(f, "{name}"),
+        }
+    }
+}
+
+impl std::fmt::Display for Pred {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({} {})", self.1, self.0)
+    }
+}
+
+impl<A: std::fmt::Display> std::fmt::Display for Qual<A> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let predicates = Spaced(Mode::Interperse, ", ", &self.0);
+
+        write!(f, "(=> {} {})", predicates, self.1)
+    }
+}
+
+impl std::fmt::Display for Hole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::ops::Deref for Hole {
     type Target = Ty;
 
     fn deref(&self) -> &Self::Target {
@@ -410,14 +500,17 @@ impl Deref for Hole {
     }
 }
 
-#[macro_use]
-extern crate lalrpop_util;
+impl From<Hole> for Ty {
+    fn from(hole: Hole) -> Self {
+        *hole.0
+    }
+}
 
-lalrpop_mod!(
-    #[allow(clippy::all)]
-    #[allow(unused)]
-    pub asena
-);
+impl From<Ty> for Hole {
+    fn from(ty: Ty) -> Self {
+        Self::new(ty)
+    }
+}
 
 pub fn leak_string(s: String) -> &'static str {
     Box::leak(s.into_boxed_str())
@@ -442,9 +535,45 @@ pub fn parse_number(str: &str) -> Result<Prim, String> {
     }
 }
 
+#[macro_use]
+extern crate lalrpop_util;
+
+fn get_new_sym(i: usize) -> Option<String> {
+    let prefix_size = ((i as f64).log(26.0) + 1.0).floor() as usize;
+    let base = 26usize.pow(prefix_size as u32);
+
+    if i == 0 {
+        return Some("a".into());
+    } else if i > base {
+        return None;
+    }
+
+    let prefix = (0..prefix_size)
+        .map(|j| ((i / 26usize.pow(j as u32)) % 26) as u8 + b'a')
+        .collect::<Vec<_>>();
+
+    String::from_utf8(prefix).ok()
+}
+
 fn main() {
+    println!(
+        "{}",
+        Qual(
+            vec![Pred(Ty::Cons(Cons::Atom(Ident("Int"))), Ident("Parse"))],
+            Ty::App(App::Arrow(
+                Ty::Cons(Cons::Atom(Ident("String"))).into(),
+                Ty::Cons(Cons::Atom(Ident("Int"))).into()
+            ))
+        )
+    );
     asena::TermParser::new().parse("1.0").unwrap();
 }
+
+lalrpop_mod!(
+    #[allow(clippy::all)]
+    #[allow(unused)]
+    pub asena
+);
 
 #[cfg(test)]
 mod parser_tests {
