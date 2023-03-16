@@ -99,15 +99,15 @@ pub enum Elab {
 
     // expressions
     Nil,
-    Atom(Ident, Ty),                    // type(*ident)
-    Do(Vec<Stmt<Elab>>),                // type(*stmt)
-    Lam(Ident, Box<Elab>),              // type(*ident) -> type(*elab)
-    App(Box<Elab>, Box<Elab>),          // type(*elab *elab)
-    Let(Ident, Box<Elab>, Box<Elab>),   // type(type(*ident) := type(*elab) in *elab)
-    Match(Box<Elab>, Vec<(Pat, Elab)>), // type(match *elab with $pat => *elab
+    Atom(Ident, Vec<Pred>, Hole),             // type(*ident)
+    Do(Vec<Stmt<Elab>>, Hole),                // type(*stmt)
+    Lam(Ident, Box<Elab>, Hole),              // type(*ident) -> type(*elab)
+    App(Box<Elab>, Box<Elab>, Hole),          // type(*elab *elab)
+    Let(Ident, Box<Elab>, Box<Elab>, Hole),   // type(type(*ident) := type(*elab) in *elab)
+    Match(Box<Elab>, Vec<(Pat, Elab)>, Hole), // type(match *elab with $pat => *elab
 
     // *internal*
-    Closure(Vec<(String, Elab)>, Ident, Box<Elab>),
+    Closure(Vec<(String, Elab)>, Ident, Box<Elab>, Hole),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -133,7 +133,7 @@ pub type Inst = Qual<Pred>;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Ambiguity(Var, Vec<Pred>);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ClassEnv {
     pub classes: im::HashMap<Ident, Class, fxhash::FxBuildHasher>,
     pub defaults: Vec<Ty>,
@@ -181,11 +181,17 @@ pub enum Ty {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Scheme(Vec<Kind>, Qual<Ty>);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Hole(Box<Ty>);
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct Hole(*mut Ty);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Span<A>(A, pub std::ops::Range<usize>);
+
+#[derive(Clone, Default)]
+pub struct TyEnv {
+    pub n: usize,
+    pub fields: im::HashMap<String, Scheme, fxhash::FxBuildHasher>,
+}
 
 pub enum Mode {
     Interperse,
@@ -272,13 +278,15 @@ impl TryFrom<Exp> for Term {
     }
 }
 
-fn call_spec(name: &str, args: Vec<Term>) -> Result<Term> {
+fn call_spec(name: &'static str, args: Vec<Term>) -> Result<Term> {
     use Term::*;
+
+    dbg!(name, &args);
 
     match (name, args.as_slice()) {
         ("as", [value, Atom(type_name)]) => Ok(As(value.clone().into(), type_name.clone())),
         ("lambda", [Atom(name), term]) => Ok(Lam(name.clone(), term.clone().into())),
-        ("let", [App(box Atom(name), value), term]) => {
+        ("let", [App(box App(box Atom(name), value), box Nil), App(box term, box Nil)]) => {
             Ok(Let(name.clone(), value.clone(), term.clone().into()))
         }
         ("do", stmts @ [..]) => {
@@ -295,7 +303,12 @@ fn call_spec(name: &str, args: Vec<Term>) -> Result<Term> {
             Ok(Term::Do(smts))
         }
 
-        _ => todo!(),
+        (name, args) => Ok(args.iter().rfold(Term::Nil, |acc, arg| {
+            App(
+                Box::new(App(Box::new(Atom(Ident(name))), Box::new(arg.clone()))),
+                Box::new(acc),
+            )
+        })),
     }
 }
 
@@ -339,12 +352,6 @@ impl TryFrom<Exp> for Vec<Term> {
     }
 }
 
-impl Term {
-    pub fn elab(&self) -> Result<Elab> {
-        todo!()
-    }
-}
-
 impl HasKind for Cons {
     fn kind(&self) -> Kind {
         Kind::Any
@@ -378,7 +385,7 @@ impl HasKind for Ty {
 
 impl HasKind for Hole {
     fn kind(&self) -> Kind {
-        self.0.kind()
+        self.unwrap().kind()
     }
 }
 
@@ -391,17 +398,67 @@ impl Kind {
     }
 }
 
-impl Hole {
-    pub fn new(ty: Ty) -> Self {
-        Self(Box::new(ty))
+impl Elab {
+    pub fn hole(&self) -> Hole {
+        match self {
+            Elab::Nil => *NIL_HOLE,
+            Elab::Prim(Prim::True) => *BOOL_HOLE,
+            Elab::Prim(Prim::False) => *BOOL_HOLE,
+            Elab::Prim(Prim::Decimal(..)) => *DECIMAL_HOLE,
+            Elab::Prim(Prim::Int(..)) => *INT_HOLE,
+            Elab::Prim(Prim::String(..)) => *STRING_HOLE,
+            Elab::Atom(_, _, ty) => *ty,
+            Elab::Do(_, ty) => *ty,
+            Elab::Lam(_, _, ty) => *ty,
+            Elab::App(_, _, ty) => *ty,
+            Elab::Let(_, _, _, ty) => *ty,
+            Elab::Match(_, _, ty) => *ty,
+            Elab::Closure(_, _, _, ty) => *ty,
+        }
+    }
+}
+
+impl Ty {
+    pub const BOOL: Ty = Ty::Cons(Cons::Bool);
+    pub const INT: Ty = Ty::Cons(Cons::Int);
+    pub const DECIMAL: Ty = Ty::Cons(Cons::Decimal);
+    pub const NAT: Ty = Ty::Cons(Cons::Nat);
+    pub const CHAR: Ty = Ty::Cons(Cons::Char);
+    pub const STRING: Ty = Ty::Cons(Cons::String);
+    pub const NIL: Ty = Ty::Cons(Cons::Nil);
+
+    pub fn arrow(head: Hole, tail: Hole) -> Self {
+        Self::App(App::Arrow(head, tail))
     }
 
-    pub fn set(&mut self, ty: Ty) {
-        *self.0 = ty;
+    pub fn quantify(&self) -> Scheme {
+        Scheme(vec![], Qual(vec![], self.clone()))
+    }
+
+    pub fn free_vars(&self) -> im::HashSet<&str> {
+        use App::*;
+        match self {
+            Ty::Var(Var(Ident(var), ..)) => im::hashset![*var],
+            Ty::App(Array(ty)) => ty.free_vars(),
+            Ty::App(Arrow(a, b) | Call(a, b)) => a.free_vars().relative_complement(b.free_vars()),
+            Ty::Gen(_) | Ty::Cons(_) => im::hashset![],
+        }
+    }
+}
+
+impl Hole {
+    pub fn new(ty: Ty) -> Self {
+        Self(Box::leak(Box::new(ty)))
+    }
+
+    pub fn set(&self, ty: Ty) {
+        unsafe {
+            *self.0 = ty;
+        }
     }
 
     pub fn unwrap(&self) -> &Ty {
-        self.0.as_ref()
+        unsafe { self.0.as_ref().unwrap() }
     }
 }
 
@@ -452,7 +509,7 @@ impl std::fmt::Display for Ty {
         match self {
             Ty::Gen(i) => write!(f, "'{}", get_new_sym(*i).unwrap_or_default()),
             Ty::Var(Var(name, kind)) => write!(f, "(: '{name} {kind})"),
-            Ty::App(Call(a, b)) => match (a.clone().into(), b.clone().into()) {
+            Ty::App(Call(a, b)) => match ((*a).into(), (*b).into()) {
                 (a @ Ty::App(..), b @ Ty::App(..)) => write!(f, "(({a}) ({b}))"),
                 (a @ Ty::App(..), b) => write!(f, "(({a}) {b})"),
                 (a, b @ Ty::App(..)) => write!(f, "({a} ({b}))"),
@@ -488,7 +545,7 @@ impl<A: std::fmt::Display> std::fmt::Display for Qual<A> {
 
 impl std::fmt::Display for Hole {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.unwrap())
     }
 }
 
@@ -496,19 +553,57 @@ impl std::ops::Deref for Hole {
     type Target = Ty;
 
     fn deref(&self) -> &Self::Target {
-        self.0.as_ref()
+        unsafe { self.0.as_ref().unwrap() }
     }
 }
 
+unsafe impl Sync for Hole {}
+
 impl From<Hole> for Ty {
     fn from(hole: Hole) -> Self {
-        *hole.0
+        hole.unwrap().clone()
     }
 }
 
 impl From<Ty> for Hole {
     fn from(ty: Ty) -> Self {
         Self::new(ty)
+    }
+}
+
+impl Instantiate for Scheme {
+    fn instantiate(&self, _types: Vec<Ty>) -> Self {
+        todo!()
+    }
+}
+
+impl Instantiate for Hole {
+    fn instantiate(&self, _types: Vec<Ty>) -> Self {
+        todo!()
+    }
+}
+
+impl Instantiate for Pred {
+    fn instantiate(&self, _types: Vec<Ty>) -> Self {
+        todo!()
+    }
+}
+
+impl Instantiate for Ty {
+    fn instantiate(&self, _types: Vec<Ty>) -> Self {
+        self.clone()
+    }
+}
+
+impl<A: Instantiate> Instantiate for Qual<A> {
+    fn instantiate(&self, types: Vec<Ty>) -> Self {
+        Qual(self.0.instantiate(types.clone()), self.1.instantiate(types))
+    }
+}
+
+impl<A: Instantiate> Instantiate for Vec<A> {
+    fn instantiate(&self, types: Vec<Ty>) -> Self {
+        self.iter().map(|a| a.instantiate(types.clone())).collect()
     }
 }
 
@@ -535,8 +630,103 @@ pub fn parse_number(str: &str) -> Result<Prim, String> {
     }
 }
 
+impl TyEnv {
+    pub fn fresh_var(&mut self, kind: Kind) -> Ty {
+        let n = self.n;
+        self.n += 1;
+        Ty::Var(Var(Ident(leak_string(format!("v{n}"))), kind))
+    }
+
+    pub fn fresh_inst(&mut self, scheme: Scheme) -> Qual<Ty> {
+        let types = scheme
+            .0
+            .into_iter()
+            .map(|kind| self.fresh_var(kind))
+            .collect();
+
+        scheme.1.instantiate(types)
+    }
+}
+pub fn unify(a_ref: Hole, b_ref: Hole) -> Result<()> {
+    use App::*;
+
+    match (a_ref.unwrap(), b_ref.unwrap()) {
+        (Ty::App(Call(a, b) | Arrow(a, b)), Ty::App(Call(a2, b2) | Arrow(a2, b2))) => {
+            unify(*a, *a2)?;
+            unify(*b, *b2)?;
+        }
+        (Ty::App(Array(a)), Ty::App(Array(a2))) => {
+            unify(*a, *a2)?;
+        }
+        (Ty::Cons(a), Ty::Cons(b)) if a == b => {}
+        (Ty::Var(Var(name, kind)), t) | (t, Ty::Var(Var(name, kind))) => match t {
+            Ty::Var(Var(tname, ..)) if tname == name => {}
+            _ if t.free_vars().contains(name.0) => {
+                return Err(format!("occurs check failed: {name} in {t}"));
+            }
+            _ if kind.clone() != t.kind() => {
+                return Err(format!("cannot unify kinds {kind} and {}", t.kind()));
+            }
+            _ => {
+                a_ref.set(t.clone());
+            }
+        },
+        (a, b) if a.kind() != b.kind() => {
+            return Err(format!("cannot unify kinds {a} and {b}"));
+        }
+        (a, b) => {
+            return Err(format!("cannot unify {a} and {b}"));
+        }
+    }
+
+    Ok(())
+}
+
+pub fn infer_exp(term: Term, env: &mut TyEnv) -> Result<Elab> {
+    match term {
+        Term::Nil => todo!(),
+        Term::Prim(prim) => Ok(Elab::Prim(prim)),
+        Term::Atom(Ident(name)) => {
+            let scheme = env
+                .fields
+                .get(name)
+                .ok_or(format!("unbound variable: {}", name))?;
+
+            let Qual(predicates, ty) = env.fresh_inst(scheme.clone());
+
+            Ok(Elab::Atom(Ident(name), predicates, ty.into()))
+        }
+        Term::Do(_) => todo!(),
+        Term::As(_, _) => todo!(),
+        Term::Lam(_, _) => todo!(),
+        Term::App(box callee, box arg) => {
+            let callee = infer_exp(callee, env)?;
+            let arg = infer_exp(arg, env)?;
+            let ty: Hole = env.fresh_var(Kind::Any).into();
+
+            unify(Ty::arrow(arg.hole(), ty).into(), callee.hole())?;
+
+            Ok(Elab::App(callee.into(), arg.into(), ty))
+        }
+        Term::Let(ident @ Ident(name), box value, box term) => {
+            let mut env = env.clone();
+            let value = infer_exp(value, &mut env)?;
+            env.fields.insert(name.to_string(), value.hole().quantify());
+            let term = infer_exp(term, &mut env)?;
+            let hole = term.hole();
+
+            Ok(Elab::Let(ident, value.into(), term.into(), hole))
+        }
+        Term::Match(_, _) => todo!(),
+        Term::Closure(_, _, _) => todo!(),
+    }
+}
+
 #[macro_use]
 extern crate lalrpop_util;
+
+#[macro_use]
+extern crate lazy_static;
 
 fn get_new_sym(i: usize) -> Option<String> {
     let prefix_size = ((i as f64).log(26.0) + 1.0).floor() as usize;
@@ -556,16 +746,6 @@ fn get_new_sym(i: usize) -> Option<String> {
 }
 
 fn main() {
-    println!(
-        "{}",
-        Qual(
-            vec![Pred(Ty::Cons(Cons::Atom(Ident("Int"))), Ident("Parse"))],
-            Ty::App(App::Arrow(
-                Ty::Cons(Cons::Atom(Ident("String"))).into(),
-                Ty::Cons(Cons::Atom(Ident("Int"))).into()
-            ))
-        )
-    );
     asena::TermParser::new().parse("1.0").unwrap();
 }
 
@@ -574,6 +754,16 @@ lalrpop_mod!(
     #[allow(unused)]
     pub asena
 );
+
+lazy_static! {
+    pub static ref BOOL_HOLE: Hole = Hole::new(Ty::BOOL);
+    pub static ref INT_HOLE: Hole = Hole::new(Ty::INT);
+    pub static ref DECIMAL_HOLE: Hole = Hole::new(Ty::DECIMAL);
+    pub static ref NAT_HOLE: Hole = Hole::new(Ty::NAT);
+    pub static ref CHAR_HOLE: Hole = Hole::new(Ty::CHAR);
+    pub static ref STRING_HOLE: Hole = Hole::new(Ty::STRING);
+    pub static ref NIL_HOLE: Hole = Hole::new(Ty::NIL);
+}
 
 #[cfg(test)]
 mod parser_tests {
@@ -627,5 +817,33 @@ mod parser_tests {
         let nil = crate::asena::TermParser::new().parse("()").unwrap();
 
         assert_eq!(nil, Exp::Nil);
+    }
+}
+
+#[cfg(test)]
+mod typing_tests {
+    use super::*;
+
+    macro_rules! run_typing {
+        ($s:expr, {$($names:ident: $types:expr),+}) => {{
+            let mut ty_env = TyEnv::default();
+            $(ty_env.fields.insert(stringify!($names).into(), $types.into());)+
+            run_typing!($s, ty_env)
+        }};
+        ($s:expr, $te:expr) => {{
+            let exp = crate::asena::TermParser::new().parse($s).unwrap();
+            let term = exp.try_into().unwrap();
+
+            infer_exp(term, &mut $te).unwrap()
+        }};
+    }
+
+    #[test]
+    fn infers_with_call() {
+        let result = run_typing!("(let (x 'hello world') (println x))", {
+            println: Ty::arrow(*STRING_HOLE, *NIL_HOLE).quantify()
+        });
+
+        println!("{}", result.hole());
     }
 }
