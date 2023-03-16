@@ -1,11 +1,11 @@
 use std::str::FromStr;
 use lalrpop_util::ParseError;
 use substring::Substring;
-use crate::Exp;
-use crate::Ident;
-use crate::Prim;
-use crate::leak_string;
-use crate::parse_number;
+use crate::syntax::Exp;
+use crate::syntax::Ident;
+use crate::syntax::Prim;
+use crate::leak::leak_string;
+use crate::parsing::parse_number;
 
 grammar;
 
