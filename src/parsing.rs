@@ -28,7 +28,7 @@ lalrpop_mod!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::syntax::{Exp, Ident};
+    use crate::syntax::Exp;
 
     #[test]
     fn string_parses() {
@@ -55,7 +55,7 @@ mod tests {
     fn atom_parses() {
         let atom = asena::TermParser::new().parse("some").unwrap();
 
-        assert_eq!(atom, Exp::Atom(Ident("some")));
+        assert_eq!(atom, Exp::Atom("some".into()));
     }
 
     #[test]
@@ -65,8 +65,8 @@ mod tests {
         assert_eq!(
             cons,
             Exp::Cons(
-                Exp::Atom(Ident("some")).into(),
-                Exp::Cons(Exp::Atom(Ident("thing")).into(), Exp::Nil.into()).into()
+                Exp::Atom("some".into()).into(),
+                Exp::Cons(Exp::Atom("thing".into()).into(), Exp::Nil.into()).into()
             )
         );
     }

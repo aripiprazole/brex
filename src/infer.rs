@@ -1,4 +1,3 @@
-use crate::leak::leak_string;
 use crate::syntax::{Elab, Ident, Term};
 use crate::typing::{Hole, Instantiate, Kind, Qual, Scheme, Ty, Var};
 use crate::Result;
@@ -53,7 +52,7 @@ impl Infer {
     pub fn fresh_var(&mut self, kind: Kind) -> Ty {
         let n = self.n;
         self.n += 1;
-        Ty::Var(Var(Ident(leak_string(format!("v{n}"))), kind))
+        Ty::Var(Var(format!("v{n}").into(), kind))
     }
 
     pub fn fresh_inst(&mut self, scheme: Scheme) -> Qual<Ty> {

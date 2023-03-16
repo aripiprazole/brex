@@ -128,8 +128,8 @@ fn call_spec(name: &'static str, args: Vec<Term>) -> Result<Term> {
 
         (name, args) => Ok(args.iter().rfold(Term::Nil, |acc, arg| {
             App(
-                Box::new(App(Box::new(Atom(Ident(name))), Box::new(arg.clone()))),
-                Box::new(acc),
+                App(Atom(name.into()).into(), arg.clone().into()).into(),
+                acc.into(),
             )
         })),
     }
