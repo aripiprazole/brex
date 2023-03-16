@@ -37,9 +37,9 @@ impl Infer {
             }
             Term::Let(ident @ Ident(name), box value, box term) => {
                 let mut env = self.clone();
-                let value = self.infer_exp(value)?;
+                let value = env.infer_exp(value)?;
                 env.fields.insert(name.to_string(), value.hole().quantify());
-                let term = self.infer_exp(term)?;
+                let term = env.infer_exp(term)?;
                 let hole = term.hole();
 
                 Ok(Elab::Let(ident, value.into(), term.into(), hole))
