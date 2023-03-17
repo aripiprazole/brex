@@ -31,14 +31,15 @@ impl Infer {
                 let arg = self.infer_exp(arg)?;
                 let ty: Hole = self.fresh_var(Kind::Any).into();
 
-                crate::mgu::unify(Ty::arrow(arg.hole(), ty).into(), callee.hole())?;
+                crate::mgu::unify(Ty::arrow(arg.hole(), ty.clone()).into(), callee.hole())?;
 
                 Ok(Elab::App(callee.into(), arg.into(), ty))
             }
             Term::Let(ident @ Ident(name), box value, box term) => {
                 let mut env = self.clone();
                 let value = env.infer_exp(value)?;
-                env.fields.insert(name.to_string(), value.hole().quantify());
+                let scheme = value.hole().extract().quantify();
+                env.fields.insert(name.into(), scheme);
                 let term = env.infer_exp(term)?;
                 let hole = term.hole();
 
@@ -88,7 +89,7 @@ mod tests {
     #[test]
     fn infers_with_call() {
         let result = run_typing!("(let (x 'hello world') (println x))", {
-            println: Ty::arrow(*typing::STRING_HOLE, *typing::NIL_HOLE).quantify()
+            println: Ty::arrow(typing::STRING_HOLE.clone(), typing::NIL_HOLE.clone()).quantify()
         });
 
         println!("{}", result.hole());

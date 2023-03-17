@@ -78,7 +78,7 @@ pub enum Stmt<E> {
     Eval(E),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Term {
     Prim(Prim),
 
@@ -96,7 +96,7 @@ pub enum Term {
     Closure(Vec<(String, Term)>, Ident, Box<Term>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Elab {
     Prim(Prim),
 

@@ -1,4 +1,4 @@
-#![feature(associated_type_defaults, box_patterns)]
+#![feature(get_mut_unchecked, associated_type_defaults, box_patterns)]
 
 pub mod infer;
 pub mod leak;

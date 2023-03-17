@@ -43,8 +43,8 @@ pub enum Ty {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Scheme(pub Vec<Kind>, pub Qual<Ty>);
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct Hole(pub *mut Ty);
+#[derive(Debug, Clone)]
+pub struct Hole(pub std::sync::Arc<Box<Ty>>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Qual<A>(pub Vec<Pred>, pub A);
@@ -62,7 +62,7 @@ pub struct Pred(pub Ty, pub Ident);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Class(pub Vec<Ident>, pub Vec<Inst>);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Hash)]
 pub struct ClassEnv {
     pub classes: im::HashMap<Ident, Class, fxhash::FxBuildHasher>,
     pub defaults: Vec<Ty>,
@@ -84,7 +84,7 @@ pub trait Instantiate {
 }
 
 impl Kind {
-    pub fn apply(&self, ty: &Ty) -> Kind {
+    pub fn apply(&self, ty: Ty) -> Kind {
         match self {
             Kind::Any => ty.kind(),
             Kind::Fun(_, box tail) => tail.clone(),
@@ -95,19 +95,19 @@ impl Kind {
 impl Elab {
     pub fn hole(&self) -> Hole {
         match self {
-            Elab::Nil => *NIL_HOLE,
-            Elab::Prim(Prim::True) => *BOOL_HOLE,
-            Elab::Prim(Prim::False) => *BOOL_HOLE,
-            Elab::Prim(Prim::Decimal(..)) => *DECIMAL_HOLE,
-            Elab::Prim(Prim::Int(..)) => *INT_HOLE,
-            Elab::Prim(Prim::String(..)) => *STRING_HOLE,
-            Elab::Atom(_, _, ty) => *ty,
-            Elab::Do(_, ty) => *ty,
-            Elab::Lam(_, _, ty) => *ty,
-            Elab::App(_, _, ty) => *ty,
-            Elab::Let(_, _, _, ty) => *ty,
-            Elab::Match(_, _, ty) => *ty,
-            Elab::Closure(_, _, _, ty) => *ty,
+            Elab::Nil => NIL_HOLE.clone(),
+            Elab::Prim(Prim::True) => BOOL_HOLE.clone(),
+            Elab::Prim(Prim::False) => BOOL_HOLE.clone(),
+            Elab::Prim(Prim::Decimal(..)) => DECIMAL_HOLE.clone(),
+            Elab::Prim(Prim::Int(..)) => INT_HOLE.clone(),
+            Elab::Prim(Prim::String(..)) => STRING_HOLE.clone(),
+            Elab::Atom(_, _, ty) => ty.clone(),
+            Elab::Do(_, ty) => ty.clone(),
+            Elab::Lam(_, _, ty) => ty.clone(),
+            Elab::App(_, _, ty) => ty.clone(),
+            Elab::Let(_, _, _, ty) => ty.clone(),
+            Elab::Match(_, _, ty) => ty.clone(),
+            Elab::Closure(_, _, _, ty) => ty.clone(),
         }
     }
 }
@@ -142,17 +142,17 @@ impl Ty {
 
 impl Hole {
     pub fn new(ty: Ty) -> Self {
-        Self(Box::leak(Box::new(ty)))
+        Self(std::sync::Arc::new(Box::new(ty)))
     }
 
-    pub fn set(&self, ty: Ty) {
+    pub fn set(&mut self, ty: Ty) {
         unsafe {
-            *self.0 = ty;
+            *std::sync::Arc::get_mut_unchecked(&mut self.0) = Box::new(ty);
         }
     }
 
-    pub fn unwrap(&self) -> &Ty {
-        unsafe { self.0.as_ref().unwrap() }
+    pub fn extract(&self) -> Ty {
+        (**self.0).clone()
     }
 }
 
@@ -207,8 +207,8 @@ impl HasKind for Var {
 impl HasKind for App {
     fn kind(&self) -> Kind {
         match self {
-            App::Arrow(head, tail) => Kind::Fun(Box::new(head.kind()), Box::new(tail.kind())),
-            App::Call(head, ty) => head.kind().apply(ty.unwrap()),
+            App::Arrow(head, tail) => Kind::Fun(head.kind().into(), tail.kind().into()),
+            App::Call(head, ty) => head.kind().apply(ty.extract()),
             App::Array(_) => Kind::Any,
         }
     }
@@ -225,7 +225,7 @@ impl HasKind for Ty {
 
 impl HasKind for Hole {
     fn kind(&self) -> Kind {
-        self.unwrap().kind()
+        self.extract().kind()
     }
 }
 
@@ -237,7 +237,7 @@ impl std::fmt::Display for Ty {
         match self {
             Ty::Gen(i) => write!(f, "'{}", get_new_sym(*i).unwrap_or_default()),
             Ty::Var(Var(name, kind)) => write!(f, "(: '{name} {kind})"),
-            Ty::App(Call(a, b)) => match ((*a).into(), (*b).into()) {
+            Ty::App(Call(a, b)) => match (a.clone().into(), b.clone().into()) {
                 (a @ Ty::App(..), b @ Ty::App(..)) => write!(f, "(({a}) ({b}))"),
                 (a @ Ty::App(..), b) => write!(f, "(({a}) {b})"),
                 (a, b @ Ty::App(..)) => write!(f, "({a} ({b}))"),
@@ -273,7 +273,7 @@ impl<A: std::fmt::Display> std::fmt::Display for Qual<A> {
 
 impl std::fmt::Display for Hole {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.unwrap())
+        write!(f, "{}", self.extract())
     }
 }
 
@@ -281,13 +281,13 @@ impl std::ops::Deref for Hole {
     type Target = Ty;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { self.0.as_ref().unwrap() }
+        &self.0
     }
 }
 
 impl From<Hole> for Ty {
     fn from(hole: Hole) -> Self {
-        hole.unwrap().clone()
+        hole.extract()
     }
 }
 
@@ -297,7 +297,19 @@ impl From<Ty> for Hole {
     }
 }
 
-unsafe impl Sync for Hole {}
+impl Eq for Hole {}
+
+impl PartialEq for Hole {
+    fn eq(&self, other: &Self) -> bool {
+        self.extract() == other.extract()
+    }
+}
+
+impl std::hash::Hash for Hole {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.extract().hash(state);
+    }
+}
 
 fn get_new_sym(i: usize) -> Option<String> {
     let prefix_size = ((i as f64).log(26.0) + 1.0).floor() as usize;
